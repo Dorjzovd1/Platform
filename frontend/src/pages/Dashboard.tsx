@@ -6,12 +6,20 @@ import { useEvents } from "../lib/events";
 import { formatBytes } from "../lib/format";
 import Overview from "../components/Overview";
 
+export interface ImagingState {
+  deviceId: number;
+  name: string;
+  pct: number;
+  step: string;
+}
+
 export default function Dashboard() {
   const [cases, setCases] = useState<Case[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
   const [detected, setDetected] = useState<DetectedDevice[]>([]);
   const [activeCase, setActiveCase] = useState<number | null>(null);
   const [busy, setBusy] = useState<string>("");
+  const [imaging, setImaging] = useState<ImagingState | null>(null);
   const { subscribe } = useEvents();
   const navigate = useNavigate();
 
@@ -40,6 +48,12 @@ export default function Dashboard() {
     return subscribe((ev) => {
       if (ev.type === "device_hotplug") detect();
       if (ev.type === "imaging_completed") reload();
+      if (ev.type === "imaging_progress") {
+        const d = ev.data as { device_id: number; progress: number; step: string };
+        setImaging((prev) =>
+          prev && prev.deviceId === d.device_id ? { ...prev, pct: d.progress, step: d.step } : prev
+        );
+      }
     });
   }, [subscribe]);
 
@@ -55,7 +69,67 @@ export default function Dashboard() {
         <DetectPanel detected={detected} busy={busy} onDetect={detect} activeCase={activeCase} onRegistered={reload} />
       </div>
 
-      <RegisteredDevices devices={devices} cases={cases} onChanged={reload} setBusy={setBusy} busy={busy} navigate={navigate} />
+      <RegisteredDevices
+        devices={devices}
+        cases={cases}
+        onChanged={reload}
+        setBusy={setBusy}
+        busy={busy}
+        navigate={navigate}
+        setImaging={setImaging}
+      />
+
+      {imaging && <ImagingOverlay state={imaging} />}
+    </div>
+  );
+}
+
+const IMAGING_STAGES = [
+  { key: "ro", label: "Write-block (read-only)", until: 5 },
+  { key: "read", label: "Дүрс уншиж байна (bit-by-bit)", until: 60 },
+  { key: "hash", label: "Hash тооцож, баталгаажуулж байна", until: 95 },
+  { key: "scan", label: "Шинжилгээ эхлүүлж байна", until: 101 },
+];
+
+function ImagingOverlay({ state }: { state: ImagingState }) {
+  const pct = Math.max(0, Math.min(100, Math.round(state.pct)));
+  const activeIdx = IMAGING_STAGES.findIndex((s) => pct < s.until);
+
+  return (
+    <div className="overlay">
+      <div className="overlay-card">
+        <h2 className="overlay-title">Forensic дүрс бэлтгэж байна</h2>
+        <p className="overlay-sub">
+          <span className="mono">{state.name}</span> төхөөрөмжөөс зөвхөн унших горимоор хуулбар авч байна.
+        </p>
+
+        <div className="progress-wrap">
+          <div className="progress-bar" style={{ width: `${Math.max(pct, 3)}%` }}>
+            <span className="progress-shimmer" />
+          </div>
+        </div>
+        <div className="progress-meta">
+          <span>{state.step || "Бэлтгэж байна…"}</span>
+          <span className="mono">{pct}%</span>
+        </div>
+
+        <ul className="stage-list">
+          {IMAGING_STAGES.map((s, i) => {
+            const done = activeIdx === -1 || i < activeIdx;
+            const active = i === activeIdx;
+            return (
+              <li key={s.key} className={done ? "done" : active ? "active" : ""}>
+                <span className="stage-icon">{done ? "✓" : active ? <span className="spinner" /> : "○"}</span>
+                {s.label}
+              </li>
+            );
+          })}
+        </ul>
+
+        <p className="overlay-hint">
+          Том диск дээр энэ хэсэг хэдэн минут үргэлжилж болно. Цонхыг хаахгүй байна уу.
+        </p>
+      </div>
     </div>
   );
 }
@@ -190,6 +264,7 @@ function RegisteredDevices({
   setBusy,
   busy,
   navigate,
+  setImaging,
 }: {
   devices: Device[];
   cases: Case[];
@@ -197,6 +272,7 @@ function RegisteredDevices({
   setBusy: (s: string) => void;
   busy: string;
   navigate: ReturnType<typeof useNavigate>;
+  setImaging: (s: ImagingState | null) => void;
 }) {
   const caseLabel = (id: number | null) => cases.find((c) => c.id === id)?.case_number ?? "—";
 
@@ -212,13 +288,18 @@ function RegisteredDevices({
 
   const startScan = async (dev: Device) => {
     setBusy(`scan-${dev.id}`);
+    const name = dev.name || dev.dev_path;
+    setImaging({ deviceId: dev.id, name, pct: 0, step: "Бэлтгэж байна…" });
     try {
-      let imageId: number | null = null;
       // Read-only тохируулж, дүрс авна.
-      if (!dev.read_only) await api.setReadOnly(dev.id);
+      if (!dev.read_only) {
+        setImaging({ deviceId: dev.id, name, pct: 2, step: "Write-block (read-only) хийж байна…" });
+        await api.setReadOnly(dev.id);
+      }
+      setImaging({ deviceId: dev.id, name, pct: 5, step: "Дүрс уншиж эхэллээ…" });
       const img = await api.acquireImage(dev.id);
-      imageId = img.id;
-      const scan = await api.createScan(dev.id, imageId, {
+      setImaging({ deviceId: dev.id, name, pct: 98, step: "Шинжилгээ эхлүүлж байна…" });
+      const scan = await api.createScan(dev.id, img.id, {
         use_image: true,
         recover_files: true,
         run_carving: true,
@@ -226,7 +307,10 @@ function RegisteredDevices({
         max_recover_size_mb: 512,
       });
       navigate(`/scans/${scan.id}`);
+    } catch (e) {
+      alert("Дүрс авах/шинжлэхэд алдаа гарлаа: " + (e as Error).message);
     } finally {
+      setImaging(null);
       setBusy("");
     }
   };
