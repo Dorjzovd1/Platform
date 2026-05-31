@@ -6,6 +6,7 @@ import type {
   EvidenceImage,
   Finding,
   HealthInfo,
+  Overview,
   Scan,
   ScanOptions,
   TimelineEvent,
@@ -34,6 +35,7 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   health: () => http<HealthInfo>("/health"),
+  overview: () => http<Overview>("/stats/overview"),
 
   // Cases
   listCases: () => http<Case[]>("/cases"),
@@ -74,6 +76,7 @@ export const api = {
 
   // Reports
   reportHtmlUrl: (scanId: number) => `${BASE}/reports/scan/${scanId}/html`,
+  reportPdfUrl: (scanId: number) => `${BASE}/reports/scan/${scanId}/pdf`,
   reportJson: (scanId: number) => http<Record<string, unknown>>(`/reports/scan/${scanId}/json`),
 };
 

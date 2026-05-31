@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -16,7 +16,7 @@ from app.schemas import (
     ScanOut,
     TimelineEventOut,
 )
-from app.services import reporting
+from app.services import pdf_report, reporting
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 settings = get_settings()
@@ -30,6 +30,23 @@ def report_html(scan_id: int, db: Session = Depends(get_db)) -> HTMLResponse:
         raise HTTPException(404, str(exc)) from exc
     audit.record(db, action="report_generated", target=f"scan_{scan_id}", detail={"format": "html"})
     return HTMLResponse(reporting.render_html(data))
+
+
+@router.get("/scan/{scan_id}/pdf", summary="PDF forensic тайлан (татах)")
+def report_pdf(scan_id: int, db: Session = Depends(get_db)) -> Response:
+    try:
+        data = reporting.build_report_data(db, scan_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    pdf_bytes = pdf_report.generate_pdf(data)
+    audit.record(db, action="report_generated", target=f"scan_{scan_id}", detail={"format": "pdf"})
+    case_no = data["case"].case_number if data["case"] else "case"
+    filename = f"REA_report_{case_no}_scan{scan_id}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/scan/{scan_id}/json", summary="JSON forensic тайлан")

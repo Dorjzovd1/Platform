@@ -125,6 +125,7 @@ def render_html(data: dict) -> str:
   .sev {{ padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; }}
   .sev-high {{ background: #ffd6d6; color: #a40000; }}
   .sev-medium {{ background: #ffe9c7; color: #8a5a00; }}
+  .sev-normal {{ background: #d8f0db; color: #1a6b2a; }}
   .sev-low {{ background: #e3f0ff; color: #0b4a8a; }}
   .sev-info {{ background: #eee; color: #555; }}
   .badge {{ display:inline-block; background:#0f3460; color:#fff; padding:3px 10px; border-radius:12px; }}

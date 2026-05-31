@@ -202,6 +202,23 @@ def _maybe_recover(source_path, byte_offset, entry, finding: Finding, options: d
         finding.recovered_path = str(dest)
 
 
+def _apply_risk(finding: Finding) -> None:
+    """Эрсдэлийн үнэлгээ хийж, severity + шалтгааныг meta-д хадгална."""
+    risk = metadata.assess_risk(
+        finding_type=finding.finding_type,
+        file_name=finding.file_name,
+        original_path=finding.original_path,
+        recovered=finding.recovered,
+    )
+    finding.severity = risk.severity
+    finding.meta = {
+        **(finding.meta or {}),
+        "risk_score": risk.score,
+        "risk_reasons": risk.reasons,
+        "risk_level": risk.severity.value,
+    }
+
+
 def _finalize_finding(db, finding: Finding) -> None:
     """Hash, MIME, severity нөхөж DB-д хадгална."""
     if finding.recovered and finding.recovered_path and os.path.exists(finding.recovered_path):
@@ -214,7 +231,7 @@ def _finalize_finding(db, finding: Finding) -> None:
         finding.mime_type = metadata.guess_mime(finding.recovered_path, finding.file_name)
     else:
         finding.mime_type = metadata.guess_mime("", finding.file_name)
-    finding.severity = metadata.assess_severity(finding.file_name, finding.original_path, finding.recovered)
+    _apply_risk(finding)
     db.add(finding)
     db.commit()
 
@@ -245,7 +262,7 @@ def _run_carving(db, job: ScanJob, source_path: str, byte_offsets: list[int]) ->
             source_tool=cf.source_tool,
             meta=cf.meta,
         )
-        finding.severity = metadata.assess_severity(cf.file_name, "", True)
+        _apply_risk(finding)
         db.add(finding)
         count += 1
     db.commit()
@@ -262,6 +279,7 @@ def _run_carving(db, job: ScanJob, source_path: str, byte_offsets: list[int]) ->
                 source_tool="blkls",
                 meta={"sample_strings": strings[:50], "total": len(strings)},
             )
+            _apply_risk(slack)
             db.add(slack)
             count += 1
             db.commit()
@@ -285,7 +303,7 @@ def _run_recycle(db, job: ScanJob, mount_point: str | None) -> int:
             source_tool=art.source,
             meta=art.meta,
         )
-        finding.severity = metadata.assess_severity(file_name, art.original_path, bool(art.content_path))
+        _apply_risk(finding)
         if art.content_path and os.path.exists(art.content_path):
             try:
                 h = hash_file(art.content_path)

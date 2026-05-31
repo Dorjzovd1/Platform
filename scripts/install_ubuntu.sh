@@ -34,7 +34,8 @@ apt-get install -y \
   coreutils \
   file \
   dosfstools \
-  ntfs-3g
+  ntfs-3g \
+  fonts-dejavu-core
 
 echo "==> Python 3.11 + venv suuiglaj baina..."
 apt-get install -y python3 python3-venv python3-dev python3-pip build-essential libudev-dev

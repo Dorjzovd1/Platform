@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import type { Case, DetectedDevice, Device } from "../api/types";
 import { useEvents } from "../lib/events";
 import { formatBytes } from "../lib/format";
+import Overview from "../components/Overview";
 
 export default function Dashboard() {
   const [cases, setCases] = useState<Case[]>([]);
@@ -46,6 +47,8 @@ export default function Dashboard() {
     <div>
       <h1 className="page-title">Хяналтын самбар</h1>
       <p className="page-sub">Зөөврийн төхөөрөмжийг таниж, хэрэгт бүртгэн, read-only шинжилгээ эхлүүлнэ.</p>
+
+      <Overview />
 
       <div className="grid grid-2">
         <CasePanel cases={cases} activeCase={activeCase} setActiveCase={setActiveCase} onCreated={reload} />

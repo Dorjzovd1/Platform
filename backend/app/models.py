@@ -50,10 +50,11 @@ class FindingType(str, enum.Enum):
 
 
 class Severity(str, enum.Enum):
-    INFO = "info"
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
+    """Эрсдэлийн 3 түвшин."""
+
+    HIGH = "high"      # Өндөр түвшин
+    MEDIUM = "medium"  # Дунд түвшин
+    NORMAL = "normal"  # Хэвийн
 
 
 # --------------------------------------------------------------------------- #
@@ -155,7 +156,7 @@ class Finding(Base):
     scan_id: Mapped[int] = mapped_column(ForeignKey("scan_jobs.id"), index=True)
 
     finding_type: Mapped[FindingType] = mapped_column(SAEnum(FindingType))
-    severity: Mapped[Severity] = mapped_column(SAEnum(Severity), default=Severity.INFO)
+    severity: Mapped[Severity] = mapped_column(SAEnum(Severity), default=Severity.NORMAL)
 
     file_name: Mapped[str] = mapped_column(String(512), default="")
     original_path: Mapped[str] = mapped_column(String(2048), default="")

@@ -87,11 +87,12 @@ def health() -> dict:
 
 
 # Routers (доорх алхмуудад бүртгэгдэнэ)
-from app.api import cases, devices, findings, reports, scans, ws  # noqa: E402
+from app.api import cases, devices, findings, reports, scans, stats, ws  # noqa: E402
 
 app.include_router(devices.router)
 app.include_router(cases.router)
 app.include_router(scans.router)
 app.include_router(findings.router)
 app.include_router(reports.router)
+app.include_router(stats.router)
 app.include_router(ws.router)

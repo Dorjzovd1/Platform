@@ -72,7 +72,7 @@ export interface Finding {
   id: number;
   scan_id: number;
   finding_type: "deleted_file" | "carved_file" | "recycle_artifact" | "slack_space";
-  severity: "info" | "low" | "medium" | "high";
+  severity: "high" | "medium" | "normal";
   file_name: string;
   original_path: string;
   inode: string;
@@ -122,4 +122,19 @@ export interface HealthInfo {
 export interface RealtimeEvent {
   type: string;
   data: Record<string, unknown>;
+}
+
+export interface Overview {
+  cases: number;
+  devices: number;
+  scans: number;
+  scans_running: number;
+  findings_total: number;
+  findings_recovered: number;
+  by_severity: Record<string, number>;
+  by_type: Record<string, number>;
+  suspicious: number;
+  normal: number;
+  suspicious_pct: number;
+  normal_pct: number;
 }

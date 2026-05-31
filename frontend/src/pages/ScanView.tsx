@@ -82,9 +82,14 @@ export default function ScanView() {
               Цуцлах
             </button>
           ) : (
-            <a className="btn sm" href={api.reportHtmlUrl(id)} target="_blank" rel="noreferrer">
-              Forensic тайлан (HTML/PDF)
-            </a>
+            <div className="row-flex">
+              <a className="btn sm" href={api.reportPdfUrl(id)}>
+                PDF тайлан татах
+              </a>
+              <a className="btn secondary sm" href={api.reportHtmlUrl(id)} target="_blank" rel="noreferrer">
+                HTML тайлан
+              </a>
+            </div>
           )}
         </div>
         <div style={{ margin: "14px 0 6px" }} className="progress">
@@ -175,11 +180,10 @@ function FindingsTab({
           <option value="slack_space">Slack space</option>
         </select>
         <select value={filters.severity} onChange={(e) => setFilters({ ...filters, severity: e.target.value })}>
-          <option value="">Бүх зэрэг</option>
-          <option value="high">Өндөр</option>
-          <option value="medium">Дунд</option>
-          <option value="low">Бага</option>
-          <option value="info">Мэдээлэл</option>
+          <option value="">Бүх түвшин</option>
+          <option value="high">Өндөр түвшин</option>
+          <option value="medium">Дунд түвшин</option>
+          <option value="normal">Хэвийн</option>
         </select>
         <select value={filters.recovered} onChange={(e) => setFilters({ ...filters, recovered: e.target.value })}>
           <option value="">Сэргээсэн (бүгд)</option>
@@ -239,11 +243,14 @@ function FindingsTab({
         <div className="panel" style={{ marginTop: 18, background: "var(--bg-panel-2)" }}>
           <div className="row-flex">
             <h2 style={{ margin: 0 }}>{selected.file_name}</h2>
+            <span className={`badge sev-${selected.severity}`}>{selected.severity}</span>
             <div className="spacer" />
             <button className="btn secondary sm" onClick={() => setSelected(null)}>
               Хаах
             </button>
           </div>
+
+          <RiskExplanation finding={selected} />
           <table style={{ marginTop: 12 }}>
             <tbody>
               <tr><td>Төрөл</td><td>{selected.finding_type}</td></tr>
@@ -266,6 +273,39 @@ function FindingsTab({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+const SEV_LABEL: Record<string, string> = {
+  high: "Өндөр түвшин",
+  medium: "Дунд түвшин",
+  normal: "Хэвийн",
+};
+
+function RiskExplanation({ finding }: { finding: Finding }) {
+  const reasons = (finding.meta?.["risk_reasons"] as string[] | undefined) ?? [];
+  const score = (finding.meta?.["risk_score"] as number | undefined) ?? 0;
+
+  return (
+    <div className="risk-box">
+      <div className="risk-head">
+        <span>Яагаад "{SEV_LABEL[finding.severity] ?? finding.severity}" гэж үнэлсэн бэ?</span>
+        <span className={`badge sev-${finding.severity}`}>Нийт оноо: {score}</span>
+      </div>
+      {reasons.length > 0 ? (
+        <ul className="risk-reasons">
+          {reasons.map((r, i) => (
+            <li key={i}>{r}</li>
+          ))}
+        </ul>
+      ) : (
+        <div style={{ color: "var(--text-dim)", fontSize: 12 }}>Шалтгаан бүртгэгдээгүй.</div>
+      )}
+      <div className="risk-scale">
+        Шалгуур: оноо <b style={{ color: "var(--red)" }}>≥5 Өндөр</b> ·{" "}
+        <b style={{ color: "var(--orange)" }}>2–4 Дунд</b> · <b style={{ color: "var(--green)" }}>&lt;2 Хэвийн</b>
+      </div>
     </div>
   );
 }

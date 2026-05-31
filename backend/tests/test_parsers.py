@@ -5,8 +5,8 @@ import struct
 from datetime import datetime, timezone
 
 from app.services import recycle
-from app.services.metadata import assess_severity
-from app.models import Severity
+from app.services.metadata import assess_risk
+from app.models import FindingType, Severity
 
 
 def test_filetime_conversion():
@@ -39,10 +39,21 @@ def test_parse_i_file_v2(tmp_path):
     assert "secret.txt" in art.original_path
 
 
-def test_severity_keywords():
-    assert assess_severity("passwords.txt", "/x/passwords.txt", True) == Severity.HIGH
-    assert assess_severity("report.docx", "/x/report.docx", True) == Severity.MEDIUM
-    assert assess_severity("random.bin", "/x/random.bin", False) == Severity.INFO
+def test_risk_assessment_levels():
+    # Эмзэг түлхүүр үг -> Өндөр, шалтгаантай.
+    high = assess_risk(finding_type=FindingType.DELETED_FILE, file_name="passwords.txt", recovered=True)
+    assert high.severity == Severity.HIGH
+    assert high.score >= 5
+    assert any("түлхүүр" in r for r in high.reasons)
+
+    # Эмзэг өргөтгөл + устгагдсан -> Дунд.
+    medium = assess_risk(finding_type=FindingType.DELETED_FILE, file_name="report.docx", recovered=False)
+    assert medium.severity == Severity.MEDIUM
+
+    # Энгийн файл -> Хэвийн.
+    normal = assess_risk(finding_type=FindingType.DELETED_FILE, file_name="image.bin", recovered=False)
+    assert normal.severity == Severity.NORMAL
+    assert normal.reasons  # шалтгаан хоосон биш
 
 
 def test_trashinfo(tmp_path):
