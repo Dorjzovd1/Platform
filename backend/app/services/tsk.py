@@ -1,0 +1,252 @@
+"""The Sleuth Kit (TSK) wrapper — mmls / fls / icat / tsk_recover.
+
+Файлын системийн метадата ашиглан устгагдсан файлуудыг илрүүлж, тэдгээрийг
+сэргээнэ. Linux/TSK байхгүй орчинд mock өгөгдөл буцаана (sample дүрсний
+'DELETED:' мөрүүдээс).
+"""
+from __future__ import annotations
+
+import logging
+import os
+import re
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+
+from app.config import get_settings
+from app.services import tools
+
+logger = logging.getLogger("rea.tsk")
+settings = get_settings()
+
+
+@dataclass
+class Partition:
+    index: int
+    start_sector: int
+    length_sectors: int
+    description: str
+    byte_offset: int  # start_sector * sector_size
+
+
+@dataclass
+class DeletedEntry:
+    inode: str
+    name: str            # path (TSK-ийн өгсөн)
+    file_type: str       # r (regular), d (dir) гэх мэт
+    size: int = 0
+    atime: datetime | None = None
+    mtime: datetime | None = None
+    ctime: datetime | None = None
+    crtime: datetime | None = None
+    realloc: bool = False
+    meta: dict = field(default_factory=dict)
+
+
+def _epoch_to_dt(value: str) -> datetime | None:
+    try:
+        ts = int(value)
+    except (TypeError, ValueError):
+        return None
+    if ts <= 0:
+        return None
+    return datetime.fromtimestamp(ts, tz=timezone.utc)
+
+
+def tsk_available() -> bool:
+    return all(tools.is_available(t) for t in ("fls", "icat"))
+
+
+# --------------------------------------------------------------------------- #
+# Partitions (mmls)
+# --------------------------------------------------------------------------- #
+_MMLS_RE = re.compile(
+    r"^\s*(\d+):\s+[\w-]+\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)$"
+)
+
+
+def list_partitions(image_path: str, sector_size: int = 512) -> list[Partition]:
+    """mmls-ээр дүрсний хуваалтын зургийг гаргана.
+
+    Хуваалт олдохгүй (нэг л FS-тэй дүрс) бол offset=0 хуваалт буцаана.
+    """
+    if not tools.is_available("mmls"):
+        return [Partition(0, 0, 0, "whole image (no mmls)", 0)]
+
+    result = tools.run(["mmls", "-b", str(sector_size), image_path])
+    if not result.ok:
+        # mmls алдаа = хуваалтын хүснэгтгүй, нэг FS гэж үзнэ.
+        return [Partition(0, 0, 0, "whole image", 0)]
+
+    partitions: list[Partition] = []
+    for line in result.stdout.splitlines():
+        m = _MMLS_RE.match(line)
+        if not m:
+            continue
+        idx, start, _end, length, desc = m.groups()
+        desc_l = desc.lower()
+        if "unallocated" in desc_l or "meta" in desc_l or "extended" in desc_l:
+            continue
+        start_i = int(start)
+        partitions.append(
+            Partition(
+                index=int(idx),
+                start_sector=start_i,
+                length_sectors=int(length),
+                description=desc.strip(),
+                byte_offset=start_i * sector_size,
+            )
+        )
+    if not partitions:
+        return [Partition(0, 0, 0, "whole image", 0)]
+    return partitions
+
+
+# --------------------------------------------------------------------------- #
+# Deleted files (fls)
+# --------------------------------------------------------------------------- #
+# Body file format: MD5|name|inode|mode|uid|gid|size|atime|mtime|ctime|crtime
+_BODY_FIELDS = 11
+
+
+def list_deleted(image_path: str, byte_offset: int = 0) -> list[DeletedEntry]:
+    """`fls -r -d -m` ашиглан устгагдсан файлуудыг (body format) жагсаана."""
+    if not tsk_available():
+        if settings.allow_mock:
+            return _mock_deleted(image_path)
+        return []
+
+    args = ["fls", "-r", "-d", "-m", "/"]
+    if byte_offset:
+        args += ["-o", str(byte_offset // 512)]
+    args.append(image_path)
+
+    result = tools.run(args, timeout=900)
+    if not result.ok:
+        logger.warning("fls алдаа: %s", result.stderr.strip())
+        return []
+
+    entries: list[DeletedEntry] = []
+    for line in result.stdout.splitlines():
+        entry = _parse_body_line(line)
+        if entry:
+            entries.append(entry)
+    return entries
+
+
+def _parse_body_line(line: str) -> DeletedEntry | None:
+    parts = line.split("|")
+    if len(parts) < _BODY_FIELDS:
+        return None
+    _md5, name, inode, mode, _uid, _gid, size, atime, mtime, ctime, crtime = parts[:_BODY_FIELDS]
+
+    realloc = "realloc" in name
+    # name дотор "(deleted)" тэмдэглэгээ байж болно.
+    display = name.replace(" (deleted)", "").replace(" (deleted-realloc)", "")
+    file_type = "d" if mode.startswith("d") else "r"
+
+    try:
+        size_i = int(size)
+    except ValueError:
+        size_i = 0
+
+    return DeletedEntry(
+        inode=inode,
+        name=display,
+        file_type=file_type,
+        size=size_i,
+        atime=_epoch_to_dt(atime),
+        mtime=_epoch_to_dt(mtime),
+        ctime=_epoch_to_dt(ctime),
+        crtime=_epoch_to_dt(crtime),
+        realloc=realloc,
+        meta={"mode": mode},
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Recovery (icat / tsk_recover)
+# --------------------------------------------------------------------------- #
+def recover_inode(
+    image_path: str,
+    inode: str,
+    dest_path: str,
+    byte_offset: int = 0,
+) -> bool:
+    """`icat`-ээр тодорхой inode-ийн агуулгыг сэргээж файлд бичнэ."""
+    if not tools.is_available("icat"):
+        if settings.allow_mock:
+            return _mock_recover(inode, dest_path)
+        return False
+
+    Path(dest_path).parent.mkdir(parents=True, exist_ok=True)
+    args = ["icat", "-r"]
+    if byte_offset:
+        args += ["-o", str(byte_offset // 512)]
+    args += [image_path, inode]
+
+    result = tools.run_to_file(args, dest_path, timeout=300)
+    if not result.ok:
+        logger.warning("icat (inode=%s) алдаа: %s", inode, result.stderr.strip())
+        return False
+    return os.path.exists(dest_path) and os.path.getsize(dest_path) >= 0
+
+
+def recover_all(image_path: str, dest_dir: str, byte_offset: int = 0) -> int:
+    """`tsk_recover -e`-ээр бүх (устгагдсан болон идэвхтэй) файлыг сэргээнэ."""
+    if not tools.is_available("tsk_recover"):
+        return 0
+    Path(dest_dir).mkdir(parents=True, exist_ok=True)
+    args = ["tsk_recover", "-e"]
+    if byte_offset:
+        args += ["-o", str(byte_offset // 512)]
+    args += [image_path, dest_dir]
+    result = tools.run(args, timeout=1800)
+    if not result.ok:
+        logger.warning("tsk_recover алдаа: %s", result.stderr.strip())
+        return 0
+    return sum(len(files) for _, _, files in os.walk(dest_dir))
+
+
+# --------------------------------------------------------------------------- #
+# Mock helpers (dev орчин)
+# --------------------------------------------------------------------------- #
+def _mock_deleted(image_path: str) -> list[DeletedEntry]:
+    """Sample дүрсний 'DELETED:<name>' мөрүүдээс хуурамч entry үүсгэнэ."""
+    entries: list[DeletedEntry] = []
+    now = datetime.now(timezone.utc)
+    try:
+        with open(image_path, "rb") as fh:
+            head = fh.read(4096).decode("utf-8", errors="replace")
+    except OSError:
+        head = ""
+    for i, line in enumerate(head.splitlines()):
+        if line.startswith("DELETED:"):
+            name = line.split("DELETED:", 1)[1].strip()
+            entries.append(
+                DeletedEntry(
+                    inode=f"{16 + i}-128-1",
+                    name=f"/{name}",
+                    file_type="r",
+                    size=1024 * (i + 1),
+                    mtime=now,
+                    atime=now,
+                    ctime=now,
+                    crtime=now,
+                    meta={"mock": True},
+                )
+            )
+    if not entries:
+        entries = [
+            DeletedEntry(inode="16-128-1", name="/secret_plan.docx", file_type="r", size=20480, mtime=now, meta={"mock": True}),
+            DeletedEntry(inode="17-128-1", name="/passwords.txt", file_type="r", size=512, mtime=now, meta={"mock": True}),
+        ]
+    return entries
+
+
+def _mock_recover(inode: str, dest_path: str) -> bool:
+    Path(dest_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(dest_path, "wb") as fh:
+        fh.write(f"[MOCK RECOVERED CONTENT for inode {inode}]\n".encode())
+        fh.write(b"Lorem ipsum dolor sit amet, recovered deleted file sample.\n")
+    return True
