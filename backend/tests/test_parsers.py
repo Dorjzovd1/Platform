@@ -68,3 +68,19 @@ def test_trashinfo(tmp_path):
     assert art is not None
     assert art.original_path == "/home/u/leak.zip"
     assert art.deleted_time is not None
+
+
+def test_tsk_fls_pretty_parse():
+    from app.services.tsk import _parse_pretty_line
+
+    entry = _parse_pretty_line("r/r * 16-128-1:    secret_plan.docx")
+    assert entry is not None
+    assert entry.inode == "16-128-1"
+    assert "secret_plan.docx" in entry.name
+
+    entry2 = _parse_pretty_line("r/r * 17-128-2:    /Users/x/passwords.txt")
+    assert entry2 is not None
+    assert "passwords.txt" in entry2.name
+
+    assert _parse_pretty_line("d/d * 18-144-3:    Documents") is None  # directory
+    assert _parse_pretty_line("r/r  16-128-1:    active.txt") is None  # not deleted

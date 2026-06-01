@@ -72,10 +72,12 @@ class EvidenceImageOut(ORMModel):
 
 # ----------------------------- Scan ---------------------------------------- #
 class ScanOptions(BaseModel):
-    use_image: bool = True             # дүрс дээр шинжлэх (эсвэл шууд device)
+    use_image: bool = False            # False = төхөөрөмж дээр шууд (хурдан)
+    quick_scan: bool = True            # бүтэн dd дүрс авахгүй
     recover_files: bool = True         # устгагдсан файлыг сэргээх
-    run_carving: bool = True           # photorec/foremost carving
+    run_carving: bool = False          # photorec — нэргүй, уdaан (default унтраалттай)
     run_recycle: bool = True           # recycle/trash artifact
+    run_named_tools: bool = True       # ntfsundelete / extundelete
     max_recover_size_mb: int = 512     # сэргээх файлын дээд хэмжээ
 
 

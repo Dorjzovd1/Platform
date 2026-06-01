@@ -29,7 +29,7 @@ from app.models import (
     ScanJob,
     ScanStatus,
 )
-from app.services import carving, imaging, metadata, recycle, tsk, writeblock
+from app.services import carving, imaging, metadata, named_recovery, recycle, tsk, writeblock
 from app.services.hashing import hash_file
 
 logger = logging.getLogger("rea.scanner")
@@ -76,8 +76,8 @@ def run_scan(scan_id: int) -> None:
 
         total_findings = 0
 
-        # 1) Устгагдсан файлууд (TSK) ----------------------------------------
-        _progress(db, job, 15, "Устгагдсан файл хайж байна (TSK)")
+        # 1) Устгагдсан файлууд (TSK fls — жинхэнэ нэр/зам) -------------------
+        _progress(db, job, 15, "Устгагдсан файл (TSK — анхны нэртэй)")
         for off in byte_offsets:
             deleted = tsk.list_deleted(source_path, off)
             for entry in deleted:
@@ -86,17 +86,26 @@ def run_scan(scan_id: int) -> None:
                 _finalize_finding(db, f)
                 total_findings += 1
 
-        # 2) Carving (unallocated/slack) -------------------------------------
-        if options.get("run_carving", True):
-            _progress(db, job, 50, "Unallocated/slack space carving")
+        # 2) FS-т тохирсон нэртэй сэргээлт (ntfsundelete / extundelete) ------
+        if options.get("run_named_tools", True) and device:
+            fs = device.fs_type or ""
+            part = named_recovery.resolve_partition_path(
+                device.dev_path, fs, device.details or {}
+            )
+            _progress(db, job, 40, f"Нэртэй сэргээлт ({fs or 'auto'})")
+            total_findings += _run_named_recovery(db, job, part, fs)
+
+        # 3) Carving (signature — нэргүй, зөвхөн run_carving=true үед) -------
+        if options.get("run_carving", False):
+            _progress(db, job, 55, "Signature carving (нэргүй — уdaан)")
             total_findings += _run_carving(db, job, source_path, byte_offsets)
 
-        # 3) Recycle / Trash artifact ----------------------------------------
+        # 4) Recycle / Trash artifact ----------------------------------------
         if options.get("run_recycle", True):
-            _progress(db, job, 75, "Recycle/Trash artifact задлаж байна")
+            _progress(db, job, 75, "Recycle/Trash (анхны замтай)")
             total_findings += _run_recycle(db, job, mount_point)
 
-        # 4) Timeline --------------------------------------------------------
+        # 5) Timeline --------------------------------------------------------
         _progress(db, job, 90, "Timeline үүсгэж байна")
         _build_timeline(db, job)
 
@@ -134,8 +143,10 @@ def _prepare_source(db, job: ScanJob, device: Device, options: dict):
     """Шинжлэх эх сурвалж (дүрс эсвэл device) болон хуваалтын offset-уудыг бэлтгэнэ."""
     source_path = device.dev_path if device else ""
     mount_point: str | None = None
+    quick = options.get("quick_scan", True)
+    use_image = options.get("use_image", not quick)
 
-    if options.get("use_image", True):
+    if use_image:
         image = None
         if job.image_id:
             image = db.get(EvidenceImage, job.image_id)
@@ -151,6 +162,12 @@ def _prepare_source(db, job: ScanJob, device: Device, options: dict):
             job.image_id = image.id
             db.add(job)
             db.commit()
+    elif device:
+        # Хурдан горим: partition дээр шууд TSK (бүтэн dd хүлээхгүй).
+        source_path = named_recovery.resolve_partition_path(
+            device.dev_path, device.fs_type or "", device.details or {}
+        )
+        logger.info("Quick scan эх сурвалж: %s", source_path)
 
     # Хуваалтын offset-ууд (mmls).
     partitions = tsk.list_partitions(source_path)
@@ -171,20 +188,22 @@ def _prepare_source(db, job: ScanJob, device: Device, options: dict):
 # Finding builders
 # --------------------------------------------------------------------------- #
 def _finding_from_deleted(scan_id: int, entry: tsk.DeletedEntry) -> Finding:
-    file_name = os.path.basename(entry.name.rstrip("/")) or entry.name
+    """Устгагдсан файл — TSK-ийн анхны зам/нэрийг хадгална."""
+    path = entry.name.replace("\\", "/")
+    file_name = os.path.basename(path.rstrip("/")) or path.lstrip("/") or entry.name
     return Finding(
         scan_id=scan_id,
         finding_type=FindingType.DELETED_FILE,
         file_name=file_name,
-        original_path=entry.name,
+        original_path=path if path.startswith("/") else f"/{path}",
         inode=entry.inode,
         size_bytes=entry.size,
         mtime=entry.mtime,
         atime=entry.atime,
         ctime=entry.ctime,
         crtime=entry.crtime,
-        source_tool="tsk",
-        meta=entry.meta,
+        source_tool="tsk-fls",
+        meta={**entry.meta, "has_original_name": True, "recovery_method": "filesystem_metadata"},
     )
 
 
@@ -236,6 +255,45 @@ def _finalize_finding(db, finding: Finding) -> None:
     db.commit()
 
 
+def _run_named_recovery(db, job: ScanJob, source_path: str, fs_type: str) -> int:
+    """ntfsundelete / extundelete — анхны файлын нэр, замтай сэргээлт."""
+    dest = settings.recovered_dir / f"scan_{job.id}" / "named"
+    named_files = named_recovery.scan_by_filesystem(source_path, fs_type, str(dest))
+    count = 0
+    seen: set[str] = set()
+    for nf in named_files:
+        key = nf.original_path.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        finding = Finding(
+            scan_id=job.id,
+            finding_type=FindingType.DELETED_FILE,
+            file_name=nf.file_name,
+            original_path=nf.original_path,
+            inode=nf.inode,
+            size_bytes=nf.size,
+            recovered=bool(nf.recovered_path and os.path.exists(nf.recovered_path)),
+            recovered_path=nf.recovered_path,
+            source_tool=nf.source_tool,
+            meta=nf.meta,
+        )
+        if finding.recovered and finding.recovered_path:
+            try:
+                h = hash_file(finding.recovered_path)
+                finding.md5, finding.sha256 = h.md5, h.sha256
+            except OSError:
+                pass
+            finding.mime_type = metadata.guess_mime(finding.recovered_path, finding.file_name)
+        else:
+            finding.mime_type = metadata.guess_mime("", finding.file_name)
+        _apply_risk(finding)
+        db.add(finding)
+        count += 1
+    db.commit()
+    return count
+
+
 def _run_carving(db, job: ScanJob, source_path: str, byte_offsets: list[int]) -> int:
     count = 0
     work_dir = settings.recovered_dir / f"scan_{job.id}" / "carved"
@@ -260,7 +318,7 @@ def _run_carving(db, job: ScanJob, source_path: str, byte_offsets: list[int]) ->
             md5=h.md5 if h else "",
             sha256=h.sha256 if h else "",
             source_tool=cf.source_tool,
-            meta=cf.meta,
+            meta={**cf.meta, "has_original_name": False, "recovery_method": "signature_carving"},
         )
         _apply_risk(finding)
         db.add(finding)
@@ -301,7 +359,7 @@ def _run_recycle(db, job: ScanJob, mount_point: str | None) -> int:
             recovered=bool(art.content_path),
             recovered_path=art.content_path,
             source_tool=art.source,
-            meta=art.meta,
+            meta={**art.meta, "has_original_name": True, "recovery_method": "recycle_artifact"},
         )
         _apply_risk(finding)
         if art.content_path and os.path.exists(art.content_path):

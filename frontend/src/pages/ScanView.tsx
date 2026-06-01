@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { api } from "../api/client";
 import type { Finding, Scan, TimelineEvent } from "../api/types";
 import { useEvents } from "../lib/events";
-import { formatBytes, formatDate, shortHash } from "../lib/format";
+import { formatBytes, formatDate, findingDisplayName, findingHasOriginalName, findingTypeLabel, shortHash } from "../lib/format";
 
 type Tab = "findings" | "timeline";
 
@@ -200,27 +200,34 @@ function FindingsTab({
             <tr>
               <th>Зэрэг</th>
               <th>Төрөл</th>
-              <th>Файл</th>
+              <th>Файлын нэр</th>
+              <th>Эх зам</th>
               <th>Хэмжээ</th>
               <th>MIME</th>
-              <th>SHA-256</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {findings.map((f) => (
+            {findings.map((f) => {
+              const displayName = findingDisplayName(f.original_path, f.file_name);
+              const named = findingHasOriginalName(f.meta);
+              return (
               <tr key={f.id}>
                 <td>
                   <span className={`badge sev-${f.severity}`}>{f.severity}</span>
                 </td>
-                <td>{f.finding_type}</td>
                 <td>
-                  <div>{f.file_name || "—"}</div>
-                  {f.original_path && <div style={{ color: "var(--text-dim)", fontSize: 11 }}>{f.original_path}</div>}
+                  <span className="type-label">{findingTypeLabel(f.finding_type)}</span>
+                  {named && <span className="badge named">нэртэй</span>}
+                </td>
+                <td>
+                  <div className="file-name-cell">{displayName}</div>
+                </td>
+                <td>
+                  <div className="mono path-cell">{f.original_path || "—"}</div>
                 </td>
                 <td>{formatBytes(f.size_bytes)}</td>
                 <td style={{ fontSize: 11 }}>{f.mime_type || "—"}</td>
-                <td className="mono">{shortHash(f.sha256)}</td>
                 <td>
                   <div className="row-flex">
                     <button className="btn secondary sm" onClick={() => openPreview(f)}>
@@ -234,7 +241,7 @@ function FindingsTab({
                   </div>
                 </td>
               </tr>
-            ))}
+            );})}
           </tbody>
         </table>
       )}
@@ -242,7 +249,7 @@ function FindingsTab({
       {selected && (
         <div className="panel" style={{ marginTop: 18, background: "var(--bg-panel-2)" }}>
           <div className="row-flex">
-            <h2 style={{ margin: 0 }}>{selected.file_name}</h2>
+            <h2 style={{ margin: 0 }}>{findingDisplayName(selected.original_path, selected.file_name)}</h2>
             <span className={`badge sev-${selected.severity}`}>{selected.severity}</span>
             <div className="spacer" />
             <button className="btn secondary sm" onClick={() => setSelected(null)}>

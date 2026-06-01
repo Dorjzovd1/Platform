@@ -15,3 +15,28 @@ export function formatDate(iso: string | null): string {
 export function shortHash(hash: string, n = 12): string {
   return hash ? hash.slice(0, n) + "…" : "—";
 }
+
+/** Ул мөрийн харагдах нэр — эх замын сүүлийн хэсэг эсвэл file_name. */
+export function findingDisplayName(originalPath: string, fileName: string): string {
+  const path = (originalPath || fileName || "").replace(/\\/g, "/");
+  if (!path) return "—";
+  const base = path.split("/").filter(Boolean).pop();
+  return base || fileName || path;
+}
+
+export function findingHasOriginalName(meta: Record<string, unknown> | null | undefined): boolean {
+  if (!meta) return false;
+  if (meta["has_original_name"] === true) return true;
+  return meta["recovery_method"] === "filesystem_metadata";
+}
+
+const TYPE_LABELS: Record<string, string> = {
+  deleted_file: "Устгагдсан (нэртэй)",
+  carved_file: "Carving (нэргүй)",
+  recycle_artifact: "Recycle Bin (нэртэй)",
+  slack_space: "Slack space",
+};
+
+export function findingTypeLabel(t: string): string {
+  return TYPE_LABELS[t] ?? t;
+}

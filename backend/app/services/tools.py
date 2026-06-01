@@ -43,6 +43,7 @@ def run(
     timeout: int | None = None,
     check: bool = False,
     input_bytes: bytes | None = None,
+    cwd: str | None = None,
 ) -> CommandResult:
     """CLI команд ажиллуулна. args[0] нь хэрэгслийн нэр.
 
@@ -58,6 +59,7 @@ def run(
         input=input_bytes,
         capture_output=True,
         timeout=timeout,
+        cwd=cwd,
     )
     result = CommandResult(
         returncode=proc.returncode,

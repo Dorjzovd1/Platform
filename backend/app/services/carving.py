@@ -50,15 +50,19 @@ def extract_unallocated(image_path: str, dest_path: str, byte_offset: int = 0) -
 
 
 def carve(image_or_blob: str, out_dir: str) -> list[CarvedFile]:
-    """Боломжтой carving хэрэгслээр signature-based сэргээлт хийнэ."""
+    """Signature-based carving — анхны нэр сэргээгдэхгүй (зөвхөн агуулга).
+
+    PhotoRec ихэвчлэн уdaан, нэргүй тул сүүлд оролдоно. Идэвхжүүлэхийг
+    scan options дотор `run_carving=true` гэж тодорхой заана.
+    """
     Path(out_dir).mkdir(parents=True, exist_ok=True)
 
-    if tools.is_available("photorec"):
-        return _carve_photorec(image_or_blob, out_dir)
     if tools.is_available("foremost"):
         return _carve_foremost(image_or_blob, out_dir)
     if tools.is_available("scalpel"):
         return _carve_scalpel(image_or_blob, out_dir)
+    if tools.is_available("photorec"):
+        return _carve_photorec(image_or_blob, out_dir)
 
     if settings.allow_mock:
         return _mock_carve(out_dir)

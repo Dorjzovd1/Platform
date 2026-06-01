@@ -48,9 +48,11 @@ export interface EvidenceImage {
 
 export interface ScanOptions {
   use_image: boolean;
+  quick_scan: boolean;
   recover_files: boolean;
   run_carving: boolean;
   run_recycle: boolean;
+  run_named_tools: boolean;
   max_recover_size_mb: number;
 }
 

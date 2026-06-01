@@ -286,29 +286,51 @@ function RegisteredDevices({
     }
   };
 
-  const startScan = async (dev: Device) => {
+  const startQuickScan = async (dev: Device) => {
     setBusy(`scan-${dev.id}`);
-    const name = dev.name || dev.dev_path;
-    setImaging({ deviceId: dev.id, name, pct: 0, step: "Бэлтгэж байна…" });
     try {
-      // Read-only тохируулж, дүрс авна.
-      if (!dev.read_only) {
-        setImaging({ deviceId: dev.id, name, pct: 2, step: "Write-block (read-only) хийж байна…" });
-        await api.setReadOnly(dev.id);
-      }
-      setImaging({ deviceId: dev.id, name, pct: 5, step: "Дүрс уншиж эхэллээ…" });
-      const img = await api.acquireImage(dev.id);
-      setImaging({ deviceId: dev.id, name, pct: 98, step: "Шинжилгээ эхлүүлж байна…" });
-      const scan = await api.createScan(dev.id, img.id, {
-        use_image: true,
+      if (!dev.read_only) await api.setReadOnly(dev.id);
+      const scan = await api.createScan(dev.id, null, {
+        use_image: false,
+        quick_scan: true,
         recover_files: true,
-        run_carving: true,
+        run_carving: false,
         run_recycle: true,
+        run_named_tools: true,
         max_recover_size_mb: 512,
       });
       navigate(`/scans/${scan.id}`);
     } catch (e) {
-      alert("Дүрс авах/шинжлэхэд алдаа гарлаа: " + (e as Error).message);
+      alert("Шинжилгээ эхлүүлэхэд алдаа: " + (e as Error).message);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const startFullScan = async (dev: Device) => {
+    setBusy(`full-${dev.id}`);
+    const name = dev.name || dev.dev_path;
+    setImaging({ deviceId: dev.id, name, pct: 0, step: "Бэлтгэж байна…" });
+    try {
+      if (!dev.read_only) {
+        setImaging({ deviceId: dev.id, name, pct: 2, step: "Write-block (read-only)…" });
+        await api.setReadOnly(dev.id);
+      }
+      setImaging({ deviceId: dev.id, name, pct: 5, step: "Бүтэн дүрс уншиж байна (удаан)…" });
+      const img = await api.acquireImage(dev.id);
+      setImaging({ deviceId: dev.id, name, pct: 98, step: "Шинжилгээ эхлүүлж байна…" });
+      const scan = await api.createScan(dev.id, img.id, {
+        use_image: true,
+        quick_scan: false,
+        recover_files: true,
+        run_carving: false,
+        run_recycle: true,
+        run_named_tools: true,
+        max_recover_size_mb: 512,
+      });
+      navigate(`/scans/${scan.id}`);
+    } catch (e) {
+      alert("Дүрс авах/шинжлэхэд алдаа: " + (e as Error).message);
     } finally {
       setImaging(null);
       setBusy("");
@@ -351,8 +373,21 @@ function RegisteredDevices({
                         Write-block
                       </button>
                     )}
-                    <button className="btn sm" disabled={busy === `scan-${d.id}`} onClick={() => startScan(d)}>
-                      {busy === `scan-${d.id}` ? "Бэлтгэж байна…" : "Шинжлэх"}
+                    <button
+                      className="btn sm"
+                      disabled={busy === `scan-${d.id}` || busy === `full-${d.id}`}
+                      onClick={() => startQuickScan(d)}
+                      title="TSK + ntfsundelete — анхны нэртэй, хурдан"
+                    >
+                      {busy === `scan-${d.id}` ? "Шинжилж байна…" : "Хурдан шинжилгээ"}
+                    </button>
+                    <button
+                      className="btn secondary sm"
+                      disabled={busy === `scan-${d.id}` || busy === `full-${d.id}`}
+                      onClick={() => startFullScan(d)}
+                      title="Бүтэн дүрс (dd) + нэртэй сэргээлт — уdaан"
+                    >
+                      {busy === `full-${d.id}` ? "Дүрс авч байна…" : "Бүрэн дүрс"}
                     </button>
                   </div>
                 </td>

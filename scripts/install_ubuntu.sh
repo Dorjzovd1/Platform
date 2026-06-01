@@ -16,8 +16,8 @@ echo "==> APT package list shinechilj baina..."
 apt-get update -y
 
 echo "==> Forensic CLI heregsluudiig suuiglaj baina..."
-# sleuthkit  : mmls, fls, icat, blkls, tsk_recover
-# testdisk   : photorec
+# sleuthkit  : mmls, fls, icat, blkls, tsk_recover  (ҮНДСЭН — устгагдсан файлын НЭР)
+# testdisk   : photorec  (нэмэлт carving — нэргүй, зөвхөн run_carving=true үед)
 # foremost / scalpel : file carving
 # ewf-tools  : ewfacquire (E01 image)
 # libewf-dev : EWF support
@@ -35,6 +35,8 @@ apt-get install -y \
   file \
   dosfstools \
   ntfs-3g \
+  ntfsprogs \
+  extundelete \
   fonts-dejavu-core
 
 echo "==> Python 3.11 + venv suuiglaj baina..."
@@ -48,7 +50,7 @@ fi
 
 echo ""
 echo "==> Suuiglagdsan heregsluudiig shalgaj baina:"
-for bin in mmls fls icat blkls tsk_recover photorec foremost scalpel ewfacquire lsblk blockdev python3 node npm; do
+for bin in mmls fls icat blkls tsk_recover ntfsundelete extundelete foremost scalpel ewfacquire lsblk blockdev python3 node npm; do
   if command -v "$bin" >/dev/null 2>&1; then
     printf "  [OK]   %-12s -> %s\n" "$bin" "$(command -v "$bin")"
   else

@@ -108,14 +108,45 @@ def list_partitions(image_path: str, sector_size: int = 512) -> list[Partition]:
 # Body file format: MD5|name|inode|mode|uid|gid|size|atime|mtime|ctime|crtime
 _BODY_FIELDS = 11
 
+# fls -p гаралт:  r/r * 16-128-1:    secret.docx
+_FLS_PRETTY_RE = re.compile(
+    r"^\s*\S+/\S+\s+\*\s+([\d-]+):\s*(.+?)\s*$"
+)
+
 
 def list_deleted(image_path: str, byte_offset: int = 0) -> list[DeletedEntry]:
-    """`fls -r -d -m` ашиглан устгагдсан файлуудыг (body format) жагсаана."""
+    """Устгагдсан файлуудыг TSK `fls`-ээр жагсаана (жинхэнэ нэр/замтай).
+
+    Эхлээд body format (`-m`), дараа нь human-readable (`-p`) ашиглана.
+    PhotoRec/carving-ийн ялгаатай нь энд файлын системийн метадатаас
+    анхны нэр, зам, огноо гарч ирнэ.
+    """
     if not tsk_available():
         if settings.allow_mock:
             return _mock_deleted(image_path)
         return []
 
+    by_inode: dict[str, DeletedEntry] = {}
+
+    for entry in _list_deleted_body(image_path, byte_offset):
+        by_inode[entry.inode] = entry
+
+    for entry in _list_deleted_pretty(image_path, byte_offset):
+        if entry.inode not in by_inode:
+            by_inode[entry.inode] = entry
+        else:
+            # pretty формат ихэвчлэн илүү цэвэр нэр өгнө.
+            existing = by_inode[entry.inode]
+            if len(entry.name) > len(existing.name) or "/" in entry.name:
+                by_inode[entry.inode] = entry
+
+    entries = list(by_inode.values())
+    logger.info("TSK fls: %d устгагдсан файл (offset=%d)", len(entries), byte_offset)
+    return entries
+
+
+def _list_deleted_body(image_path: str, byte_offset: int) -> list[DeletedEntry]:
+    """`fls -r -d -m` — body format (бүрэн зам, timestamp)."""
     args = ["fls", "-r", "-d", "-m", "/"]
     if byte_offset:
         args += ["-o", str(byte_offset // 512)]
@@ -123,15 +154,56 @@ def list_deleted(image_path: str, byte_offset: int = 0) -> list[DeletedEntry]:
 
     result = tools.run(args, timeout=900)
     if not result.ok:
-        logger.warning("fls алдаа: %s", result.stderr.strip())
+        logger.warning("fls -m алдаа: %s", result.stderr.strip())
         return []
 
     entries: list[DeletedEntry] = []
     for line in result.stdout.splitlines():
         entry = _parse_body_line(line)
+        if entry and entry.file_type == "r":
+            entries.append(entry)
+    return entries
+
+
+def _list_deleted_pretty(image_path: str, byte_offset: int) -> list[DeletedEntry]:
+    """`fls -r -d -p` — уншигдах хэлбэр (* = устгагдсан, нэр харагдана)."""
+    args = ["fls", "-r", "-d", "-p"]
+    if byte_offset:
+        args += ["-o", str(byte_offset // 512)]
+    args.append(image_path)
+
+    result = tools.run(args, timeout=900)
+    if not result.ok:
+        logger.warning("fls -p алдаа: %s", result.stderr.strip())
+        return []
+
+    entries: list[DeletedEntry] = []
+    for line in result.stdout.splitlines():
+        entry = _parse_pretty_line(line)
         if entry:
             entries.append(entry)
     return entries
+
+
+def _parse_pretty_line(line: str) -> DeletedEntry | None:
+    m = _FLS_PRETTY_RE.match(line)
+    if not m:
+        return None
+    inode, raw_name = m.groups()
+    name = raw_name.strip()
+    if not name or name in (".", ".."):
+        return None
+    # Зөвхөн файл (directory биш).
+    if line.strip().startswith("d/"):
+        return None
+    path = name if name.startswith("/") else f"/{name}"
+    return DeletedEntry(
+        inode=inode,
+        name=path,
+        file_type="r",
+        size=0,
+        meta={"source": "fls-pretty"},
+    )
 
 
 def _parse_body_line(line: str) -> DeletedEntry | None:
